@@ -24,3 +24,7 @@ site-clone: ## Create a perfect static visual clone of a site
 		exit 1; \
 	fi
 	@node src/index.js $(from) --depth=$(depth) --include-videos=$(includeVideos)
+
+.PHONY: test
+test: ## Run integration tests with a local fixture
+	@npm test

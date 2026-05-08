@@ -74,7 +74,7 @@ async function checkClonedPage(originalUrl, cloneDir) {
         timeout: 30000,
       });
       await page.waitForTimeout(3000);
-      const originalScreenshot = path.join(cloneDir, "..", "screenshots", `original-${vp.name}.png`);
+      const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${vp.name}_original.png`);
       await fs.mkdir(path.dirname(originalScreenshot), { recursive: true });
       await page.screenshot({ path: originalScreenshot, fullPage: true });
 
@@ -84,13 +84,15 @@ async function checkClonedPage(originalUrl, cloneDir) {
         timeout: 15000,
       });
       await page.waitForTimeout(3000);
-      const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `clone-${vp.name}.png`);
+      const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${vp.name}_cloned.png`);
       await page.screenshot({ path: cloneScreenshot, fullPage: true });
 
       await page.close();
     }
 
-    console.log(`\n✅ Visual check complete! Compare images in ./output/${new URL(originalUrl).hostname}/screenshots/`);
+    console.log(
+      `\n✅ Visual check complete! Compare images in ./${path.relative(process.cwd(), path.join(cloneDir, "..", "screenshots"))}/`,
+    );
   } catch (err) {
     console.error(`  [Verification Error] ${err.message}`);
   } finally {
@@ -241,7 +243,7 @@ async function downloadAsset(
  * Main orchestrator for the Literal Visual Clone
  */
 async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output") {
-  console.log(`\n--- Starting Perfect Visual Clone for ${url} ---\n`);
+  console.log(`\n--- Starting Site Cloning for ${url} ---\n`);
 
   const domain = new URL(url).hostname;
   const cloneDir = path.resolve(path.join(outBaseDir, domain, "clone"));
@@ -396,13 +398,15 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
     await fs.mkdir(path.dirname(targetHtmlPath), { recursive: true });
 
     await fs.writeFile(targetHtmlPath, html);
-    console.log(`  -> Saved literal clone to ./output/${domain}/clone${pageLocalPath}`);
+    console.log(`  -> Saved literal clone to ./${path.relative(process.cwd(), targetHtmlPath)}`);
   }
 
-  // Final Step: Visual Check
-  await checkClonedPage(url, cloneDir);
+  // Final Step: Visual Check for all cloned pages
+  for (const page of crawlResult.pages) {
+    await checkClonedPage(page.url, cloneDir);
+  }
 
-  console.log(`\n✅ Clone Complete! Check ./output/${domain}/`);
+  console.log(`\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`);
 }
 
 // Setup shell autocomplete

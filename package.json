@@ -8,7 +8,8 @@
   },
   "type": "module",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node tests/run-tests.js"
   },
   "dependencies": {
     "cli-progress": "^3.12.0",
