@@ -16,6 +16,8 @@
     "omelette": "^0.4.17",
     "p-limit": "^7.3.0",
     "p-retry": "^8.0.0",
-    "playwright": "^1.59.1"
+    "pixelmatch": "^7.2.0",
+    "playwright": "^1.59.1",
+    "pngjs": "^7.0.0"
   }
 }

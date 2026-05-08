@@ -6,12 +6,45 @@ import { chromium } from "playwright";
 import pLimit from "p-limit";
 import cliProgress from "cli-progress";
 import omelette from "omelette";
+import { PNG } from "pngjs";
+import pixelmatch from "pixelmatch";
+
+/**
+ * Compare two PNG images and return the percentage of mismatch
+ */
+async function compareImages(path1, path2, diffPath) {
+  const img1 = PNG.sync.read(await fs.readFile(path1));
+  const img2 = PNG.sync.read(await fs.readFile(path2));
+  
+  // Ensure images are the same size for comparison
+  // If not, we use the larger dimensions and pad the smaller one
+  const width = Math.max(img1.width, img2.width);
+  const height = Math.max(img1.height, img2.height);
+  
+  const img1Fixed = new PNG({ width, height });
+  const img2Fixed = new PNG({ width, height });
+  
+  PNG.bitblt(img1, img1Fixed, 0, 0, img1.width, img1.height, 0, 0);
+  PNG.bitblt(img2, img2Fixed, 0, 0, img2.width, img2.height, 0, 0);
+
+  const diff = new PNG({ width, height });
+
+  const numDiffPixels = pixelmatch(img1Fixed.data, img2Fixed.data, diff.data, width, height, { threshold: 0.1 });
+  
+  await fs.writeFile(diffPath, PNG.sync.write(diff));
+  
+  const totalPixels = width * height;
+  const diffPercentage = (numDiffPixels / totalPixels) * 100;
+  return 100 - diffPercentage; // Similarity percentage
+}
 
 /**
  * Visual verification to ensure the local clone matches the original site
  */
 async function checkClonedPage(originalUrl, cloneDir) {
-  console.log(`\n--- Verifying Visual Fidelity ---`);
+  const urlObj = new URL(originalUrl);
+  const pathSlug = (urlObj.hostname + urlObj.pathname).replace(/[^a-zA-Z0-9]/g, "_");
+  console.log(`\n--- Verifying Visual Fidelity for ${originalUrl} ---`);
   console.log(`  Starting local HTTP server for ${cloneDir}...`);
 
   // Start a zero-dependency static node server directly in this script
@@ -74,18 +107,23 @@ async function checkClonedPage(originalUrl, cloneDir) {
         timeout: 30000,
       });
       await page.waitForTimeout(3000);
-      const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${vp.name}_original.png`);
+      const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_original.png`);
       await fs.mkdir(path.dirname(originalScreenshot), { recursive: true });
       await page.screenshot({ path: originalScreenshot, fullPage: true });
 
       // 2. Snapshot the local clone
-      await page.goto("http://localhost:8081/", {
+      const localUrl = `http://localhost:8081${urlObj.pathname}`;
+      await page.goto(localUrl, {
         waitUntil: "domcontentloaded",
         timeout: 15000,
       });
       await page.waitForTimeout(3000);
-      const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${vp.name}_cloned.png`);
+      const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_cloned.png`);
       await page.screenshot({ path: cloneScreenshot, fullPage: true });
+
+      const diffScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_diff.png`);
+      const similarity = await compareImages(originalScreenshot, cloneScreenshot, diffScreenshot);
+      console.log(`  [${vp.name}] Visual Similarity: ${similarity.toFixed(2)}%`);
 
       await page.close();
     }
