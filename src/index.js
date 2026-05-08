@@ -39,6 +39,38 @@ async function compareImages(path1, path2, diffPath) {
 }
 
 /**
+ * Scroll the page to the bottom to trigger lazy loading
+ */
+async function scrollPage(page) {
+  await page.evaluate(async () => {
+    await new Promise((resolve) => {
+      let totalHeight = 0;
+      const distance = 400;
+      let checks = 0;
+      const timer = setInterval(() => {
+        const scrollHeight = document.body.scrollHeight;
+        window.scrollBy(0, distance);
+        totalHeight += distance;
+
+        if (totalHeight >= scrollHeight - window.innerHeight) {
+          checks++;
+          if (checks >= 5) {
+            clearInterval(timer);
+            resolve();
+          }
+        } else {
+          checks = 0;
+        }
+      }, 100);
+    });
+  });
+  // Scroll back to top for the screenshot
+  await page.evaluate(() => window.scrollTo(0, 0));
+  // Wait a moment for any final assets or layout shifts
+  await page.waitForTimeout(2000);
+}
+
+/**
  * Visual verification to ensure the local clone matches the original site
  */
 async function verifyAllPages(pages, cloneDir) {
@@ -109,10 +141,10 @@ async function verifyAllPages(pages, cloneDir) {
 
         // 1. Snapshot the original
         await page.goto(originalUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 30000,
+          waitUntil: "networkidle",
+          timeout: 60000,
         });
-        await page.waitForTimeout(3000);
+        await scrollPage(page);
         const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_original.png`);
         await fs.mkdir(path.dirname(originalScreenshot), { recursive: true });
         await page.screenshot({ path: originalScreenshot, fullPage: true });
@@ -120,10 +152,10 @@ async function verifyAllPages(pages, cloneDir) {
         // 2. Snapshot the local clone
         const localUrl = `http://localhost:8081${urlObj.pathname}`;
         await page.goto(localUrl, {
-          waitUntil: "domcontentloaded",
-          timeout: 15000,
+          waitUntil: "networkidle",
+          timeout: 30000,
         });
-        await page.waitForTimeout(3000);
+        await scrollPage(page);
         const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_cloned.png`);
         await page.screenshot({ path: cloneScreenshot, fullPage: true });
 
