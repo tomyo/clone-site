@@ -1,34 +1,78 @@
-# Site Clone
+# 🌐 Site Cloner (Visual Fidelity)
 
-A standalone tool to create a "Perfect Visual Clone" of any website. It downloads all assets (CSS, JS, Fonts, Images) and rewrites HTML to work locally with zero dependencies on the original server.
+A high-fidelity website cloner that creates a perfect static local version of any website. It doesn't just download files; it uses a headless browser to capture the fully rendered state, downloads all assets (including those Grouped by external domains), and performs an automated visual fidelity audit.
 
-## Installation
+## ✨ Features
+
+- **🚀 Headless Rendering**: Uses Playwright to capture the DOM _after_ JavaScript execution.
+- **📦 Smart Asset Discovery**: Automatically finds and downloads images, fonts, scripts, and stylesheets, even those lazy-loaded or hidden in CSS `url()` calls.
+- **📂 Deep Crawling**: Specify a `--depth` to clone entire sub-sections of a site.
+- **🔍 Visual Fidelity Audit**: Automatically compares the original site against the local clone using pixel-diffing.
+- **📊 Detailed Reporting**: Generates a `report.md` with similarity percentages and execution summaries.
+- **🐚 Shell Autocomplete**: Full support for `tab` completion for all CLI flags.
+- **⚡ Parallel Downloads**: Optimized asset fetching with concurrency limits.
+
+## 🚀 Quick Start
+
+### Installation
 
 ```bash
-cd site-clone
+git clone https://github.com/youruser/clone-site.git
+cd clone-site
 npm install
+npm link # Makes 'clone-site' command available globally
 ```
 
-## Usage
+### Setup Autocomplete
 
 ```bash
-node src/index.js <url> [--recursive] [--include-videos=true] [-f|--force] [--out=output_dir]
+clone-site --setup-completion
+# Restart your terminal or source your shell config
 ```
 
-### Options
+### Basic Usage
 
-- `--recursive`: Crawls up to 10 internal pages (default: 1 page).
-- `--include-videos=true`: Downloads video/media files (can be heavy).
-- `-f`, `--force`: Force redownload of assets even if they already exist locally.
-- `--out=dir`: Base directory for output (default: `output`).
+```bash
+# Clone a single page
+clone-site https://example.com
 
-## Roadmap
+# Clone with depth (1 level deep) and include videos
+clone-site https://example.com --depth=1 --include-videos=true
 
-See [PLAN.md](PLAN.md) for the long-term development plan and [SESSION.md](SESSION.md) for current progress and next steps.
+# Custom output directory
+clone-site https://example.com --out=my-clones
+```
 
-## How it works
+## 🛠 Command Line Options
 
-1. **Crawl**: Uses Playwright to render the page and capture all network requests.
-2. **Download**: Fetches all assets and organizes them into a local directory structure. External assets are grouped under `_external/`.
-3. **Rewrite**: Updates HTML and CSS to use relative local paths.
-4. **Verify**: Automatically starts a local server and takes screenshots to compare the clone with the original.
+| Flag                           | Description                                   | Default    |
+| ------------------------------ | --------------------------------------------- | ---------- |
+| `--depth=N`                    | How many levels of links to follow            | `0`        |
+| `--include-videos=true\|false` | Download heavy media files (.mp4, .webm, etc) | `false`    |
+| `--out=dir`                    | Root directory for clones                     | `./output` |
+| `-f, --force`                  | Overwrite existing assets                     | `false`    |
+| `--setup-completion`           | Install shell autocomplete scripts            | -          |
+
+## 🧪 Development & Testing
+
+```bash
+# Run the integration tests
+make test
+# or
+npm test
+```
+
+## 📁 Output Structure
+
+The tool organizes outputs by domain:
+
+```text
+output/example.com/
+├── clone/             # The actual static website
+│   ├── index.html
+│   ├── about/index.html
+│   ├── _external/     # Assets from other domains (e.g. Google Fonts)
+│   └── wp-content/    # Local asset structure preserved
+├── screenshots/       # Original vs Cloned vs Diff snapshots
+└── report.md          # Visual fidelity and crawl summary
+```
