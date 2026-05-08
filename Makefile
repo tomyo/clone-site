@@ -18,7 +18,7 @@ help: ## Show this help message
 	@echo "  includeVideos=true|false      Download heavy media files like mp4 (default: false)"
 
 .PHONY: site-clone
-site-clone: ## Create a perfect static visual clone of a site
+site-clone: ## Create a clone of a site
 	@if [ -z "$(from)" ]; then \
 		echo "Error: Please provide a URL using 'make site-clone from=<url>'"; \
 		exit 1; \

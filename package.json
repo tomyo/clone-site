@@ -1,7 +1,7 @@
 {
   "name": "clone-site",
   "version": "0.0.1",
-  "description": "A Visual Website Cloner",
+  "description": "A Website Cloner",
   "main": "src/index.js",
   "bin": {
     "clone-site": "./src/index.js"

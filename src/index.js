@@ -86,6 +86,8 @@ async function verifyAllPages(pages, cloneDir) {
   await new Promise((r) => server.listen(8081, r));
   const browser = await chromium.launch({ headless: true });
 
+  let visualReport = `\n## Visual Fidelity Report\n\n`;
+
   try {
     for (const pageInfo of pages) {
       const originalUrl = pageInfo.url;
@@ -93,6 +95,7 @@ async function verifyAllPages(pages, cloneDir) {
       const pathSlug = (urlObj.hostname + urlObj.pathname).replace(/[^a-zA-Z0-9]/g, "_");
       
       console.log(`\n  Checking: ${originalUrl}`);
+      visualReport += `### Page: ${originalUrl}\n\n`;
 
       const viewports = [
         { name: "desktop", width: 1440, height: 900 },
@@ -127,16 +130,20 @@ async function verifyAllPages(pages, cloneDir) {
         const diffScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_diff.png`);
         const similarity = await compareImages(originalScreenshot, cloneScreenshot, diffScreenshot);
         console.log(`    [${vp.name}] Similarity: ${similarity.toFixed(2)}%`);
+        visualReport += `- **${vp.name}**: ${similarity.toFixed(2)}% similarity\n`;
 
         await page.close();
       }
+      visualReport += `\n`;
     }
 
     console.log(
       `\n✅ Visual check complete! Compare images in ./${path.relative(process.cwd(), path.join(cloneDir, "..", "screenshots"))}/`,
     );
+    return visualReport;
   } catch (err) {
     console.error(`  [Verification Error] ${err.message}`);
+    return `\n## Visual Fidelity Report\n\nError during verification: ${err.message}\n`;
   } finally {
     await browser.close();
     server.close();
@@ -286,12 +293,19 @@ async function downloadAsset(
  */
 async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output") {
   console.log(`\n--- Starting Site Cloning for ${url} ---\n`);
+  let report = `# Clone Report: ${url}\n\n`;
+  report += `Date: ${new Date().toLocaleString()}\n`;
+  report += `- **Target URL**: ${url}\n`;
+  report += `- **Depth**: ${depth}\n`;
+  report += `- **Include Videos**: ${includeVideos}\n`;
+  report += `- **Force Refresh**: ${force}\n\n`;
 
   const domain = new URL(url).hostname;
   const cloneDir = path.resolve(path.join(outBaseDir, domain, "clone"));
 
   // Step 1: Crawl
   console.log("1. Crawling and rendering DOM...");
+  report += `## 1. Crawling\n\n`;
   const maxPages = depth > 0 ? 1000 : 1; // Default large page count, actual limit is controlled by depth
   const maxDepth = depth;
   const outDir = path.join(outBaseDir, domain);
@@ -300,11 +314,18 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   const crawlResult = await crawler.crawl();
   await crawler.close();
 
+  report += `- **Pages discovered**: ${crawlResult.pages.length}\n`;
+  crawlResult.pages.forEach(p => {
+    report += `  - ${p.url}\n`;
+  });
+  report += `\n`;
+
   await fs.mkdir(cloneDir, { recursive: true });
   await fs.writeFile(path.join(cloneDir, "crawl-data.json"), JSON.stringify(crawlResult, null, 2));
 
   // Step 2: Download Assets
   console.log(`\n2. Downloading Assets (includeVideos=${includeVideos})...`);
+  report += `## 2. Assets\n\n`;
   const assetMap = new Map(); // Maps original absolute URLs to new local paths
   const visitedAssets = new Set(); // Prevent infinite recursion
   const stats = { newFiles: 0 };
@@ -361,9 +382,11 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   progressBar.stop();
 
   console.log(`\n   -> Downloaded ${stats.newFiles} new files.`);
+  report += `- **New assets downloaded**: ${stats.newFiles}\n\n`;
 
   // Step 3: Rewrite HTML
   console.log("\n3. Rewriting HTML to use local assets...");
+  report += `## 3. Rewriting HTML\n\n`;
 
   for (const page of crawlResult.pages) {
     console.log(`\nProcessing page: ${page.url}`);
@@ -440,13 +463,20 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
     await fs.mkdir(path.dirname(targetHtmlPath), { recursive: true });
 
     await fs.writeFile(targetHtmlPath, html);
-    console.log(`  -> Saved literal clone to ./${path.relative(process.cwd(), targetHtmlPath)}`);
+    const relSavedPath = path.relative(process.cwd(), targetHtmlPath);
+    console.log(`  -> Saved literal clone to ./${relSavedPath}`);
+    report += `- Saved: \`./${relSavedPath}\`\n`;
   }
 
   // Final Step: Visual Check for all cloned pages
-  await verifyAllPages(crawlResult.pages, cloneDir);
+  const visualReport = await verifyAllPages(crawlResult.pages, cloneDir);
+  report += visualReport;
 
-  console.log(`\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`);
+  const finalMessage = `\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`;
+  console.log(finalMessage);
+  report += `\n${finalMessage}\n`;
+
+  await fs.writeFile(path.join(outDir, "report.md"), report);
 }
 
 // Setup shell autocomplete
