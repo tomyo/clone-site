@@ -41,13 +41,11 @@ async function compareImages(path1, path2, diffPath) {
 /**
  * Visual verification to ensure the local clone matches the original site
  */
-async function checkClonedPage(originalUrl, cloneDir) {
-  const urlObj = new URL(originalUrl);
-  const pathSlug = (urlObj.hostname + urlObj.pathname).replace(/[^a-zA-Z0-9]/g, "_");
-  console.log(`\n--- Verifying Visual Fidelity for ${originalUrl} ---`);
+async function verifyAllPages(pages, cloneDir) {
+  console.log(`\n--- Verifying Visual Fidelity for ${pages.length} pages ---`);
   console.log(`  Starting local HTTP server for ${cloneDir}...`);
 
-  // Start a zero-dependency static node server directly in this script
+  // Start a single zero-dependency static node server for all pages
   const http = await import("http");
   const fsSync = await import("fs");
   const server = http.createServer((req, res) => {
@@ -86,46 +84,52 @@ async function checkClonedPage(originalUrl, cloneDir) {
   });
 
   await new Promise((r) => server.listen(8081, r));
-
   const browser = await chromium.launch({ headless: true });
 
-  const viewports = [
-    { name: "desktop", width: 1440, height: 900 },
-    { name: "mobile", width: 375, height: 667 },
-  ];
-
   try {
-    for (const vp of viewports) {
-      console.log(`  Snapshotting ${vp.name} (${vp.width}x${vp.height})...`);
-      const page = await browser.newPage({
-        viewport: { width: vp.width, height: vp.height },
-      });
+    for (const pageInfo of pages) {
+      const originalUrl = pageInfo.url;
+      const urlObj = new URL(originalUrl);
+      const pathSlug = (urlObj.hostname + urlObj.pathname).replace(/[^a-zA-Z0-9]/g, "_");
+      
+      console.log(`\n  Checking: ${originalUrl}`);
 
-      // 1. Snapshot the original
-      await page.goto(originalUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 30000,
-      });
-      await page.waitForTimeout(3000);
-      const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_original.png`);
-      await fs.mkdir(path.dirname(originalScreenshot), { recursive: true });
-      await page.screenshot({ path: originalScreenshot, fullPage: true });
+      const viewports = [
+        { name: "desktop", width: 1440, height: 900 },
+        { name: "mobile", width: 375, height: 667 },
+      ];
 
-      // 2. Snapshot the local clone
-      const localUrl = `http://localhost:8081${urlObj.pathname}`;
-      await page.goto(localUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: 15000,
-      });
-      await page.waitForTimeout(3000);
-      const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_cloned.png`);
-      await page.screenshot({ path: cloneScreenshot, fullPage: true });
+      for (const vp of viewports) {
+        const page = await browser.newPage({
+          viewport: { width: vp.width, height: vp.height },
+        });
 
-      const diffScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_diff.png`);
-      const similarity = await compareImages(originalScreenshot, cloneScreenshot, diffScreenshot);
-      console.log(`  [${vp.name}] Visual Similarity: ${similarity.toFixed(2)}%`);
+        // 1. Snapshot the original
+        await page.goto(originalUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 30000,
+        });
+        await page.waitForTimeout(3000);
+        const originalScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_original.png`);
+        await fs.mkdir(path.dirname(originalScreenshot), { recursive: true });
+        await page.screenshot({ path: originalScreenshot, fullPage: true });
 
-      await page.close();
+        // 2. Snapshot the local clone
+        const localUrl = `http://localhost:8081${urlObj.pathname}`;
+        await page.goto(localUrl, {
+          waitUntil: "domcontentloaded",
+          timeout: 15000,
+        });
+        await page.waitForTimeout(3000);
+        const cloneScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_cloned.png`);
+        await page.screenshot({ path: cloneScreenshot, fullPage: true });
+
+        const diffScreenshot = path.join(cloneDir, "..", "screenshots", `${pathSlug}_${vp.name}_diff.png`);
+        const similarity = await compareImages(originalScreenshot, cloneScreenshot, diffScreenshot);
+        console.log(`    [${vp.name}] Similarity: ${similarity.toFixed(2)}%`);
+
+        await page.close();
+      }
     }
 
     console.log(
@@ -135,7 +139,7 @@ async function checkClonedPage(originalUrl, cloneDir) {
     console.error(`  [Verification Error] ${err.message}`);
   } finally {
     await browser.close();
-    server.close(); // Close the node server
+    server.close();
   }
 }
 
@@ -440,9 +444,7 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   }
 
   // Final Step: Visual Check for all cloned pages
-  for (const page of crawlResult.pages) {
-    await checkClonedPage(page.url, cloneDir);
-  }
+  await verifyAllPages(crawlResult.pages, cloneDir);
 
   console.log(`\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`);
 }
