@@ -344,6 +344,75 @@ async function downloadAsset(
   }
 }
 
+async function probeSite(url) {
+  console.log(`\n🔍 Probing ${url}...\n`);
+  const browser = await chromium.launch({ headless: true });
+  
+  try {
+    const page = await browser.newPage();
+    await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
+
+    const analysis = await page.evaluate(async (u) => {
+      // Get raw HTML text content
+      let rawText = "";
+      try {
+        const res = await fetch(u);
+        const rawHtml = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(rawHtml, "text/html");
+        // Remove scripts and styles for accurate text measurement
+        doc.querySelectorAll('script, style').forEach(el => el.remove());
+        rawText = doc.body ? doc.body.textContent.replace(/\s+/g, ' ').trim() : "";
+      } catch(e) {}
+
+      // Get rendered HTML text content
+      const cloneDoc = document.cloneNode(true);
+      cloneDoc.querySelectorAll('script, style').forEach(el => el.remove());
+      const renderedText = cloneDoc.body ? cloneDoc.body.textContent.replace(/\s+/g, ' ').trim() : "";
+
+      // Look for web components
+      const elements = Array.from(document.querySelectorAll('*'));
+      const customElementsFound = elements.filter(el => el.tagName.includes('-') && customElements.get(el.tagName.toLowerCase()));
+      
+      return {
+        rawLength: rawText.length,
+        renderedLength: renderedText.length,
+        wcCount: customElementsFound.length,
+        wcTags: Array.from(new Set(customElementsFound.map(e => e.tagName.toLowerCase()))).slice(0, 3)
+      };
+    }, url);
+
+    // Heuristics
+    // If raw text is less than 30% of rendered text, it's heavily client-side rendered (SPA)
+    const isSPA = analysis.rawLength < analysis.renderedLength * 0.3 && analysis.renderedLength > 100;
+    
+    let arch = isSPA ? "Single Page Application (Client-side rendering detected)" : "Traditional / Server-Side Rendered (SSR)";
+    let flags = [];
+    
+    if (isSPA) {
+      flags.push("--exclude-scripts=all");
+    } else {
+      flags.push("--raw");
+    }
+    
+    if (analysis.wcCount > 0) {
+      flags.push("--dehydrate-components");
+    }
+
+    console.log(`📊 Analysis:`);
+    console.log(`- Architecture: ${arch}`);
+    console.log(`- Web Components: ${analysis.wcCount > 0 ? `Yes (Found ${analysis.wcCount} elements like ${analysis.wcTags.join(", ")})` : "No"}`);
+    
+    console.log(`\n💡 Recommended Command:`);
+    console.log(`clone-site ${url} ${flags.join(" ")}\n`);
+
+  } catch (e) {
+    console.error(`❌ Failed to probe site: ${e.message}`);
+  } finally {
+    await browser.close();
+  }
+}
+
 /**
  * Main orchestrator for the Literal Visual Clone
  */
@@ -623,7 +692,7 @@ const includeVideos = includeVideosArg ? includeVideosArg.split("=")[1] === "tru
 
 if (!url || url === "--help" || url === "-h") {
   console.error(
-    "Usage: clone-site <url> [--depth=<0|1|2|...|full>] [--include-videos=true|false] [-f|--force] [--exclude-scripts=all|external|internal] [--raw] [--dehydrate-components] [--out=dir] [--setup-completion]",
+    "Usage: clone-site <url> [--depth=<0|1|2|...|full>] [--include-videos=true|false] [-f|--force] [--exclude-scripts=all|external|internal] [--raw] [--dehydrate-components] [--probe] [--out=dir] [--setup-completion]",
   );
   process.exit(1);
 }
@@ -633,4 +702,10 @@ if (!url.startsWith("http://") && !url.startsWith("https://")) {
   url = `https://${url}`;
 }
 
-runPipeline(url, depth, includeVideos, force, outBaseDir, excludeScripts, raw, dehydrateComponents).catch(console.error);
+const isProbe = args.includes("--probe");
+
+if (isProbe) {
+  probeSite(url).then(() => process.exit(0)).catch(console.error);
+} else {
+  runPipeline(url, depth, includeVideos, force, outBaseDir, excludeScripts, raw, dehydrateComponents).catch(console.error);
+}

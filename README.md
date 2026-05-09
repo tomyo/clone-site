@@ -48,6 +48,9 @@ clone-site https://example.com --raw --exclude-scripts=all
 # Strip only external scripts
 clone-site https://example.com --exclude-scripts=external
 
+# Probe a site to get recommended flags
+clone-site https://example.com --probe
+
 # Custom output directory
 clone-site https://example.com --out=my-clones
 ```
@@ -61,6 +64,7 @@ clone-site https://example.com --out=my-clones
 | `--raw`                        | Save original pre-JS HTML source instead of rendered DOM  | `false`    |
 | `--dehydrate-components`       | Revert custom elements to pre-JS Light DOM before saving  | `false`    |
 | `--exclude-scripts=all\|external\|internal` | Strip matching `<script>` tags from output | `false`    |
+| `--probe`                      | Analyze site and recommend best cloning flags             | `false`    |
 | `--out=dir`                    | Root directory for clones                                 | `./output` |
 | `-f, --force`                  | Overwrite existing assets                                 | `false`    |
 | `--setup-completion`           | Install shell autocomplete scripts                        | -          |
