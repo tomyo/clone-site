@@ -75,7 +75,64 @@ export class Crawler {
   async extractPageData(page, currentUrl, useRawSource = false) {
     const title = await page.title();
 
-    // Get rendered DOM
+    // 1. Take a screenshot of the fully rendered state BEFORE we mess with the DOM
+    const filenameSafeUrl = currentUrl.replace(/[^a-z0-9]/gi, "_").toLowerCase();
+    const screenshotPath = path.join(this.outputDir, "screenshots", `${filenameSafeUrl}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+
+    // 2. Determine effective base URL for resolving relative links
+    let baseUrlToUse = currentUrl;
+    const baseTagHref = await page.$eval("base", (b) => b.getAttribute("href")).catch(() => null);
+    if (baseTagHref) {
+      try {
+        baseUrlToUse = new URL(baseTagHref, currentUrl).href;
+      } catch (e) {}
+    }
+
+    // 3. Revert Custom Elements (Web Components) Light DOM to pre-hydration state if requested
+    if (this.options.dehydrateComponents && !useRawSource) {
+      try {
+        await page.evaluate(async (url) => {
+          try {
+            const res = await fetch(url);
+            const rawHtml = await res.text();
+            const parser = new DOMParser();
+            const rawDoc = parser.parseFromString(rawHtml, "text/html");
+
+            // Find all custom elements (tags with a hyphen)
+            const tags = new Set();
+            document.querySelectorAll('*').forEach(el => {
+              if (el.tagName.includes('-')) tags.add(el.tagName);
+            });
+
+            for (const tag of tags) {
+              const renderedEls = document.querySelectorAll(tag);
+              const originalEls = rawDoc.querySelectorAll(tag);
+              
+              for (let i = 0; i < renderedEls.length; i++) {
+                if (originalEls[i]) {
+                  // Revert the innerHTML to remove injected `slot` attributes and generated DOM
+                  renderedEls[i].innerHTML = originalEls[i].innerHTML;
+                  
+                  // Also strip the slot attribute from the host if it was added dynamically
+                  const origSlot = originalEls[i].getAttribute('slot');
+                  const renderedSlot = renderedEls[i].getAttribute('slot');
+                  if (renderedSlot && !origSlot) {
+                    renderedEls[i].removeAttribute('slot');
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[Warning] Failed to dehydrate components:", e);
+          }
+        }, currentUrl);
+      } catch (e) {
+        console.warn(`      [Warning] Could not execute component dehydration for ${currentUrl}.`);
+      }
+    }
+
+    // 4. Get rendered DOM (now potentially dehydrated)
     const renderedDom = await page.content();
     let sourceHtml = renderedDom;
 
@@ -90,15 +147,6 @@ export class Crawler {
       } catch (e) {
         console.warn(`      [Warning] Failed to fetch raw source for ${currentUrl}, falling back to rendered DOM.`);
       }
-    }
-
-    // Determine effective base URL for resolving relative links
-    let baseUrlToUse = currentUrl;
-    const baseTagHref = await page.$eval("base", (b) => b.getAttribute("href")).catch(() => null);
-    if (baseTagHref) {
-      try {
-        baseUrlToUse = new URL(baseTagHref, currentUrl).href;
-      } catch (e) {}
     }
 
     // Extract links (routes)
@@ -187,11 +235,6 @@ export class Crawler {
       media: Array.from(mediaSet),
       fonts: Array.from(fontSet),
     };
-
-    // Take a screenshot
-    const filenameSafeUrl = currentUrl.replace(/[^a-z0-9]/gi, "_").toLowerCase();
-    const screenshotPath = path.join(this.outputDir, "screenshots", `${filenameSafeUrl}.png`);
-    await page.screenshot({ path: screenshotPath, fullPage: true });
 
     return {
       url: currentUrl,

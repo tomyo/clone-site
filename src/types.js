@@ -2,6 +2,10 @@
  * @typedef {Object} CrawlOptions
  * @property {string} url
  * @property {number} [maxPages]
+ * @property {number} [maxDepth]
+ * @property {string} [outputDir]
+ * @property {boolean} [raw]
+ * @property {boolean} [dehydrateComponents]
  */
 
 /**

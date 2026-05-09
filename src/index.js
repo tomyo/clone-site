@@ -74,7 +74,7 @@ async function scrollPage(page) {
 /**
  * Visual verification to ensure the local clone matches the original site
  */
-async function verifyAllPages(pages, cloneDir, noScripts = false) {
+async function verifyAllPages(pages, cloneDir, excludeScripts = false) {
   console.log(`\n--- Verifying Visual Fidelity for ${pages.length} pages ---`);
   console.log(`  Starting local HTTP server for ${cloneDir}...`);
 
@@ -96,10 +96,16 @@ async function verifyAllPages(pages, cloneDir, noScripts = false) {
       }
       const ext = path.extname(filePath).toLowerCase();
 
-      // If noScripts is true, we strip scripts from HTML responses to prevent double-execution
-      if (noScripts && ext === ".html") {
+      // If excludeScripts is set, we strip scripts from HTML responses to prevent double-execution
+      if (excludeScripts && ext === ".html") {
         let html = data.toString("utf-8");
-        html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+        html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match) => {
+          const hasSrc = /src\s*=\s*['"]/.test(match);
+          if (excludeScripts === "all") return "";
+          if (excludeScripts === "external" && hasSrc) return "";
+          if (excludeScripts === "internal" && !hasSrc) return "";
+          return match;
+        });
         data = Buffer.from(html, "utf-8");
       }
 
@@ -341,7 +347,7 @@ async function downloadAsset(
 /**
  * Main orchestrator for the Literal Visual Clone
  */
-async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output", noScripts = false, raw = false) {
+async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output", excludeScripts = false, raw = false, dehydrateComponents = false) {
   console.log(`\n--- Starting Site Cloning for ${url} ---\n`);
   let report = `# Clone Report: ${url}\n\n`;
   report += `Date: ${new Date().toLocaleString()}\n`;
@@ -349,8 +355,9 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   report += `- **Depth**: ${depth === Infinity ? "full" : depth}\n`;
   report += `- **Include Videos**: ${includeVideos}\n`;
   report += `- **Force Refresh**: ${force}\n`;
-  report += `- **No Scripts**: ${noScripts}\n`;
-  report += `- **Raw Source**: ${raw}\n\n`;
+  report += `- **Exclude Scripts**: ${excludeScripts || "false"}\n`;
+  report += `- **Raw Source**: ${raw}\n`;
+  report += `- **Dehydrate Components**: ${dehydrateComponents}\n\n`;
 
   const domain = new URL(url).hostname;
   const cloneDir = path.resolve(path.join(outBaseDir, domain, "clone"));
@@ -361,7 +368,7 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   const maxPages = depth === Infinity ? Infinity : (depth > 0 ? 1000 : 1);
   const maxDepth = depth;
   const outDir = path.join(outBaseDir, domain);
-  const crawler = new Crawler({ url, maxPages, maxDepth, outputDir: outDir, raw });
+  const crawler = new Crawler({ url, maxPages, maxDepth, outputDir: outDir, raw, dehydrateComponents });
   await crawler.init();
   const crawlResult = await crawler.crawl();
   await crawler.close();
@@ -448,9 +455,15 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
     // Remove <base> tags to prevent relative path breakage locally
     html = html.replace(/<base[^>]*>/gi, "");
 
-    // If noScripts is true, we strip script tags from the final HTML
-    if (noScripts) {
-      html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+    // If excludeScripts is set, we strip script tags from the final HTML
+    if (excludeScripts) {
+      html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, (match) => {
+        const hasSrc = /src\s*=\s*['"]/.test(match);
+        if (excludeScripts === "all") return "";
+        if (excludeScripts === "external" && hasSrc) return "";
+        if (excludeScripts === "internal" && !hasSrc) return "";
+        return match;
+      });
     }
 
     // Rewrite internal page links to be relative local paths
@@ -539,7 +552,7 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   }
 
   // Final Step: Visual Check for all cloned pages
-  const visualReport = await verifyAllPages(crawlResult.pages, cloneDir, noScripts);
+  const visualReport = await verifyAllPages(crawlResult.pages, cloneDir, excludeScripts);
   report += visualReport;
 
   const finalMessage = `\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`;
@@ -560,8 +573,11 @@ completion.on("options", ({ reply }) => {
     "--depth=full",
     "--include-videos=true",
     "--include-videos=false",
-    "--no-scripts",
+    "--exclude-scripts=all",
+    "--exclude-scripts=external",
+    "--exclude-scripts=internal",
     "--raw",
+    "--dehydrate-components",
     "-f",
     "--force",
     "--out=",
@@ -594,8 +610,10 @@ if (depthArg) {
 }
 
 const force = args.includes("-f") || args.includes("--force");
-const noScripts = args.includes("--no-scripts");
+const excludeScriptsArg = args.find((a) => a.startsWith("--exclude-scripts="));
+const excludeScripts = excludeScriptsArg ? excludeScriptsArg.split("=")[1] : false;
 const raw = args.includes("--raw");
+const dehydrateComponents = args.includes("--dehydrate-components");
 
 const outArg = args.find((a) => a.startsWith("--out="));
 const outBaseDir = outArg ? outArg.split("=")[1] : "output";
@@ -605,7 +623,7 @@ const includeVideos = includeVideosArg ? includeVideosArg.split("=")[1] === "tru
 
 if (!url || url === "--help" || url === "-h") {
   console.error(
-    "Usage: clone-site <url> [--depth=<0|1|2|...|full>] [--include-videos=true|false] [-f|--force] [--no-scripts] [--raw] [--out=dir] [--setup-completion]",
+    "Usage: clone-site <url> [--depth=<0|1|2|...|full>] [--include-videos=true|false] [-f|--force] [--exclude-scripts=all|external|internal] [--raw] [--dehydrate-components] [--out=dir] [--setup-completion]",
   );
   process.exit(1);
 }
@@ -615,4 +633,4 @@ if (!url.startsWith("http://") && !url.startsWith("https://")) {
   url = `https://${url}`;
 }
 
-runPipeline(url, depth, includeVideos, force, outBaseDir, noScripts, raw).catch(console.error);
+runPipeline(url, depth, includeVideos, force, outBaseDir, excludeScripts, raw, dehydrateComponents).catch(console.error);
