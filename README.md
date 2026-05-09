@@ -1,12 +1,12 @@
-# 🌐 Site Cloner (Visual Fidelity)
+# 🌐 Site Cloner
 
-A high-fidelity website cloner that creates a perfect static local version of any website. It doesn't just download files; it uses a headless browser to capture the fully rendered state, downloads all assets (including those Grouped by external domains), and performs an automated visual fidelity audit.
+A tool to create a local clone of any website.
 
 ## ✨ Features
 
 - **🚀 Headless Rendering**: Uses Playwright to capture the DOM _after_ JavaScript execution.
 - **📦 Smart Asset Discovery**: Automatically finds and downloads images, fonts, scripts, and stylesheets, even those lazy-loaded or hidden in CSS `url()` calls.
-- **📂 Deep Crawling**: Specify a `--depth` to clone entire sub-sections of a site.
+- **📂 Deep Crawling**: Specify a `--depth` (e.g. `1`, `2`, or `full`) to clone entire sub-sections of a site.
 - **🔍 Visual Fidelity Audit**: Automatically compares the original site against the local clone using pixel-diffing.
 - **📊 Detailed Reporting**: Generates a `report.md` with similarity percentages and execution summaries.
 - **🐚 Shell Autocomplete**: Full support for `tab` completion for all CLI flags.
@@ -39,19 +39,22 @@ clone-site https://example.com
 # Clone with depth (1 level deep) and include videos
 clone-site https://example.com --depth=1 --include-videos=true
 
+# Clone an entire site
+clone-site https://example.com --depth=full
+
 # Custom output directory
 clone-site https://example.com --out=my-clones
 ```
 
 ## 🛠 Command Line Options
 
-| Flag                           | Description                                   | Default    |
-| ------------------------------ | --------------------------------------------- | ---------- |
-| `--depth=N`                    | How many levels of links to follow            | `0`        |
-| `--include-videos=true\|false` | Download heavy media files (.mp4, .webm, etc) | `false`    |
-| `--out=dir`                    | Root directory for clones                     | `./output` |
-| `-f, --force`                  | Overwrite existing assets                     | `false`    |
-| `--setup-completion`           | Install shell autocomplete scripts            | -          |
+| Flag                           | Description                                               | Default    |
+| ------------------------------ | --------------------------------------------------------- | ---------- |
+| `--depth=N\|full`              | How many levels of links to follow (`full` for unlimited) | `0`        |
+| `--include-videos=true\|false` | Download heavy media files (.mp4, .webm, etc)             | `false`    |
+| `--out=dir`                    | Root directory for clones                                 | `./output` |
+| `-f, --force`                  | Overwrite existing assets                                 | `false`    |
+| `--setup-completion`           | Install shell autocomplete scripts                        | -          |
 
 ## 🧪 Development & Testing
 
