@@ -69,13 +69,28 @@ export class Crawler {
   /**
    * @param {import('playwright').Page} page
    * @param {string} currentUrl
+   * @param {boolean} useRawSource
    * @returns {Promise<CrawledPage>}
    */
-  async extractPageData(page, currentUrl) {
+  async extractPageData(page, currentUrl, useRawSource = false) {
     const title = await page.title();
 
     // Get rendered DOM
     const renderedDom = await page.content();
+    let sourceHtml = renderedDom;
+
+    if (useRawSource) {
+      try {
+        // Fetch the raw HTML from the network to avoid JS-modified state
+        const response = await page.evaluate(async (url) => {
+          const res = await fetch(url);
+          return await res.text();
+        }, currentUrl);
+        sourceHtml = response;
+      } catch (e) {
+        console.warn(`      [Warning] Failed to fetch raw source for ${currentUrl}, falling back to rendered DOM.`);
+      }
+    }
 
     // Determine effective base URL for resolving relative links
     let baseUrlToUse = currentUrl;
@@ -181,8 +196,7 @@ export class Crawler {
     return {
       url: currentUrl,
       title,
-      html: renderedDom, // We now use the fully rendered DOM as the source of truth
-      renderedDom,
+      renderedDom: sourceHtml,
       routes,
       assets,
       screenshotPath,
@@ -201,6 +215,7 @@ export class Crawler {
     const queue = [{ url: startUrl, depth: 0 }];
     const maxPages = this.options.maxPages || 10;
     const maxDepth = this.options.maxDepth !== undefined ? this.options.maxDepth : 1;
+    const useRawSource = this.options.raw || false;
 
     // Track all requested external assets
     const externalAssets = {
@@ -284,7 +299,7 @@ export class Crawler {
 
         await page.waitForTimeout(5000);
 
-        const pageData = await this.extractPageData(page, currentUrl);
+        const pageData = await this.extractPageData(page, currentUrl, useRawSource);
         this.pages.push(pageData);
 
         // Ensure all explicit DOM assets are added to global tracking, even if network didn't trigger

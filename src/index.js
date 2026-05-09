@@ -8,6 +8,7 @@ import cliProgress from "cli-progress";
 import omelette from "omelette";
 import { PNG } from "pngjs";
 import pixelmatch from "pixelmatch";
+import crypto from "crypto";
 
 /**
  * Compare two PNG images and return the percentage of mismatch
@@ -73,7 +74,7 @@ async function scrollPage(page) {
 /**
  * Visual verification to ensure the local clone matches the original site
  */
-async function verifyAllPages(pages, cloneDir) {
+async function verifyAllPages(pages, cloneDir, noScripts = false) {
   console.log(`\n--- Verifying Visual Fidelity for ${pages.length} pages ---`);
   console.log(`  Starting local HTTP server for ${cloneDir}...`);
 
@@ -88,11 +89,20 @@ async function verifyAllPages(pages, cloneDir) {
     }
     fsSync.readFile(filePath, (err, data) => {
       if (err) {
+        // console.error(`      [Server Error] 404: ${urlPath} -> ${filePath}`);
         res.writeHead(404);
         res.end(JSON.stringify(err));
         return;
       }
       const ext = path.extname(filePath).toLowerCase();
+
+      // If noScripts is true, we strip scripts from HTML responses to prevent double-execution
+      if (noScripts && ext === ".html") {
+        let html = data.toString("utf-8");
+        html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+        data = Buffer.from(html, "utf-8");
+      }
+
       const mimeTypes = {
         ".html": "text/html",
         ".js": "text/javascript",
@@ -208,16 +218,24 @@ async function downloadAsset(
     }
 
     let localPath = "";
-    // If it matches the site's domain, we keep its path structure (starting with /)
+    const cleanPath = decodeURIComponent(urlPath);
+
     if (urlObj.hostname === baseDomain) {
-      localPath = urlPath;
+      localPath = cleanPath;
     } else {
       // For external domains (e.g. fonts.googleapis.com), we group them under /_external/
-      localPath = `/_external/${urlObj.hostname}${urlPath}`;
-    }
+      // We MUST handle query parameters for external assets as they often identify the specific resource (e.g. Google Drive thumbnails)
+      let dir = path.dirname(cleanPath);
+      let filename = path.basename(cleanPath);
 
-    // Decode URI components to prevent %20 in filenames locally
-    localPath = decodeURIComponent(localPath);
+      if (urlObj.search) {
+        const hash = crypto.createHash("md5").update(urlObj.search).digest("hex").slice(0, 8);
+        const ext = path.extname(filename);
+        const name = path.basename(filename, ext);
+        filename = `${name}_${hash}${ext}`;
+      }
+      localPath = path.join("/_external", urlObj.hostname, dir, filename);
+    }
 
     // Ensure the folder structure exists locally
     const targetPath = path.join(cloneDir, localPath);
@@ -323,14 +341,16 @@ async function downloadAsset(
 /**
  * Main orchestrator for the Literal Visual Clone
  */
-async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output") {
+async function runPipeline(url, depth = 0, includeVideos = false, force = false, outBaseDir = "output", noScripts = false, raw = false) {
   console.log(`\n--- Starting Site Cloning for ${url} ---\n`);
   let report = `# Clone Report: ${url}\n\n`;
   report += `Date: ${new Date().toLocaleString()}\n`;
   report += `- **Target URL**: ${url}\n`;
-  report += `- **Depth**: ${depth}\n`;
+  report += `- **Depth**: ${depth === Infinity ? "full" : depth}\n`;
   report += `- **Include Videos**: ${includeVideos}\n`;
-  report += `- **Force Refresh**: ${force}\n\n`;
+  report += `- **Force Refresh**: ${force}\n`;
+  report += `- **No Scripts**: ${noScripts}\n`;
+  report += `- **Raw Source**: ${raw}\n\n`;
 
   const domain = new URL(url).hostname;
   const cloneDir = path.resolve(path.join(outBaseDir, domain, "clone"));
@@ -338,10 +358,10 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   // Step 1: Crawl
   console.log("1. Crawling and rendering DOM...");
   report += `## 1. Crawling\n\n`;
-  const maxPages = depth > 0 ? 1000 : 1; // Default large page count, actual limit is controlled by depth
+  const maxPages = depth === Infinity ? Infinity : (depth > 0 ? 1000 : 1);
   const maxDepth = depth;
   const outDir = path.join(outBaseDir, domain);
-  const crawler = new Crawler({ url, maxPages, maxDepth, outputDir: outDir });
+  const crawler = new Crawler({ url, maxPages, maxDepth, outputDir: outDir, raw });
   await crawler.init();
   const crawlResult = await crawler.crawl();
   await crawler.close();
@@ -428,27 +448,39 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
     // Remove <base> tags to prevent relative path breakage locally
     html = html.replace(/<base[^>]*>/gi, "");
 
+    // If noScripts is true, we strip script tags from the final HTML
+    if (noScripts) {
+      html = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+    }
+
     // Rewrite internal page links to be relative local paths
     // Iterate over all discovered pages in the entire crawl to rewrite navigation links
+    // Sort by length descending to prevent partial replacements (e.g. root replacing prefix of longer paths)
     const allRoutes = new Set();
     crawlResult.pages.forEach((p) => {
       allRoutes.add(p.url);
       if (p.routes) p.routes.forEach((r) => allRoutes.add(r));
     });
 
-    for (const routeUrl of allRoutes) {
+    const sortedRoutes = Array.from(allRoutes).sort((a, b) => b.length - a.length);
+
+    for (const routeUrl of sortedRoutes) {
       let routePath = new URL(routeUrl).pathname;
-      if (routePath === "/") routePath = "/index.html"; // map root explicitly if preferred, though / works for static servers
+      // We don't force /index.html here anymore to preserve original routing logic as much as possible
+      // Our local server handles trailing slashes and root paths by serving index.html automatically.
 
       html = html.split(`href="${routeUrl}"`).join(`href="${routePath}"`);
       html = html.split(`href='${routeUrl}'`).join(`href='${routePath}'`);
       // Also replace exact absolute domain references in links just in case
+      // Use more specific matching to avoid breaking substrings of other URLs
       html = html.split(`"${routeUrl}"`).join(`"${routePath}"`);
       html = html.split(`'${routeUrl}'`).join(`'${routePath}'`);
     }
 
     // Rewrite downloaded Assets
-    for (const [originalUrl, localPath] of assetMap.entries()) {
+    // Sort asset URLs by length descending as well
+    const sortedAssets = Array.from(assetMap.entries()).sort((a, b) => b[0].length - a[0].length);
+    for (const [originalUrl, localPath] of sortedAssets) {
       html = html.split(originalUrl).join(localPath);
       if (originalUrl.includes("&")) {
         html = html.split(originalUrl.replace(/&/g, "&amp;")).join(localPath);
@@ -475,10 +507,16 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
     }
 
     // Strip out remaining absolute origins for the domain to handle dynamically generated base URLs, RSS feeds, API links, etc
-    const domainPrefix = `https://${domain}`;
-    html = html.split(domainPrefix).join("");
-    const httpPrefix = `http://${domain}`;
-    html = html.split(httpPrefix).join("");
+    // Use more robust stripping that avoids creating protocol-relative URLs (like //path)
+    const prefixes = [`https://${domain}`, `http://${domain}`];
+    for (const prefix of prefixes) {
+      html = html.split(prefix + "/").join("/");
+      html = html.split(`"${prefix}"`).join(`"/"`);
+      html = html.split(`'${prefix}'`).join(`'/'`);
+    }
+    // Final catch-all for the domain without trailing slash
+    html = html.split(`https://${domain}`).join("");
+    html = html.split(`http://${domain}`).join("");
 
     // Determine filename preserving the site structure
     const parsedUrl = new URL(page.url);
@@ -501,7 +539,7 @@ async function runPipeline(url, depth = 0, includeVideos = false, force = false,
   }
 
   // Final Step: Visual Check for all cloned pages
-  const visualReport = await verifyAllPages(crawlResult.pages, cloneDir);
+  const visualReport = await verifyAllPages(crawlResult.pages, cloneDir, noScripts);
   report += visualReport;
 
   const finalMessage = `\n✅ Clone Complete! Check ./${path.relative(process.cwd(), path.join(outBaseDir, domain))}/`;
@@ -519,8 +557,11 @@ completion.on("options", ({ reply }) => {
     "--depth=0",
     "--depth=1",
     "--depth=2",
+    "--depth=full",
     "--include-videos=true",
     "--include-videos=false",
+    "--no-scripts",
+    "--raw",
     "-f",
     "--force",
     "--out=",
@@ -543,11 +584,18 @@ const depthArg = args.find((a) => a.startsWith("--depth"));
 let depth = 0;
 if (depthArg) {
   if (depthArg.includes("=")) {
-    depth = parseInt(depthArg.split("=")[1], 10) || 0;
+    const val = depthArg.split("=")[1];
+    if (val === "full") {
+      depth = Infinity;
+    } else {
+      depth = parseInt(val, 10) || 0;
+    }
   }
 }
 
 const force = args.includes("-f") || args.includes("--force");
+const noScripts = args.includes("--no-scripts");
+const raw = args.includes("--raw");
 
 const outArg = args.find((a) => a.startsWith("--out="));
 const outBaseDir = outArg ? outArg.split("=")[1] : "output";
@@ -557,7 +605,7 @@ const includeVideos = includeVideosArg ? includeVideosArg.split("=")[1] === "tru
 
 if (!url || url === "--help" || url === "-h") {
   console.error(
-    "Usage: clone-site <url> [--depth=<0|1|2|...>] [--include-videos=true|false] [-f|--force] [--out=dir] [--setup-completion]",
+    "Usage: clone-site <url> [--depth=<0|1|2|...|full>] [--include-videos=true|false] [-f|--force] [--no-scripts] [--raw] [--out=dir] [--setup-completion]",
   );
   process.exit(1);
 }
@@ -567,4 +615,4 @@ if (!url.startsWith("http://") && !url.startsWith("https://")) {
   url = `https://${url}`;
 }
 
-runPipeline(url, depth, includeVideos, force, outBaseDir).catch(console.error);
+runPipeline(url, depth, includeVideos, force, outBaseDir, noScripts, raw).catch(console.error);
